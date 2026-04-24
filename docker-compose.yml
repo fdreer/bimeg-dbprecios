@@ -1,0 +1,159 @@
+# ============================================================================
+# bimeg-dbprecios — orquestación de servicios
+# ============================================================================
+# Dos modos de ejecución:
+#
+#   LOCAL (desarrollo, con DB en el equipo):
+#       docker-compose --profile local up -d
+#       → levanta: n8n + scraper + postgres + postgrest
+#       → .env debe tener SUPABASE_URL=http://postgrest:3000
+#
+#   PRODUCCIÓN (DB en Supabase cloud):
+#       docker-compose up -d
+#       → levanta: n8n + scraper solamente
+#       → .env debe tener SUPABASE_URL=https://xxxx.supabase.co
+#
+# Todos los secretos viven en .env (no committeado). Ver .env.example.
+# ============================================================================
+
+services:
+
+  # ==========================================================================
+  # n8n — orquestador de workflows
+  # ==========================================================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: bimeg-n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      # ---- Autenticación básica de la UI ---------------------------------
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+
+      # ---- Clave de encriptación interna (CRÍTICA para portabilidad) ------
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # ---- Timezone para cron triggers ------------------------------------
+      TZ: ${TZ}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+
+      # ---- Variables consumidas via $env dentro de workflows --------------
+      # Los nodos HTTP referencian estas con {{ $env.NOMBRE }}.
+      # En modo local SUPABASE_URL apunta a http://postgrest:3000
+      # En modo prod SUPABASE_URL apunta a https://xxxx.supabase.co
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SCRAPER_URL: ${SCRAPER_URL}
+
+      # ---- API keys adicionales (agregar según sources.yml) ---------------
+      # EJEMPLO_API_KEY: ${EJEMPLO_API_KEY}
+
+      # ---- Misc -----------------------------------------------------------
+      N8N_LOG_LEVEL: info
+    volumes:
+      # Persistencia de workflows, credenciales (encriptadas con la key de
+      # arriba), ejecuciones e historial. NO se commitea — vive en el host.
+      - ./n8n_data:/home/node/.n8n
+    networks:
+      - bimeg-net
+    depends_on:
+      scraper-service:
+        condition: service_healthy
+
+  # ==========================================================================
+  # scraper-service — FastAPI + Playwright (red interna, sin puerto público)
+  # ==========================================================================
+  scraper-service:
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    container_name: bimeg-scraper
+    restart: always
+    # NO expose/ports: sólo accesible desde la red Docker interna.
+    environment:
+      # ---- API keys de proveedores (agregar según sources.yml) ------------
+      # EJEMPLO_API_KEY: ${EJEMPLO_API_KEY}
+      TZ: ${TZ}
+    volumes:
+      # Config de fuentes montada read-only.
+      - ./sources.yml:/app/sources.yml:ro
+    networks:
+      - bimeg-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ==========================================================================
+  # postgres — base de datos LOCAL (solo en modo dev)
+  # ==========================================================================
+  # Se activa solo con: docker-compose --profile local up -d
+  # En producción este servicio NO se levanta — la DB vive en Supabase cloud.
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: bimeg-postgres
+    restart: always
+    profiles: ["local"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      TZ: ${TZ}
+    volumes:
+      # Persistencia de datos en el host.
+      - ./postgres_data:/var/lib/postgresql/data
+
+      # Scripts de inicialización (se ejecutan en orden alfabético la PRIMERA
+      # vez que arranca el container). Si cambiás el schema, hay que borrar
+      # ./postgres_data para que se re-ejecuten.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+      - ./db/init-local.sql:/docker-entrypoint-initdb.d/01-init-local.sql:ro
+    networks:
+      - bimeg-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # postgrest — API REST sobre postgres (espejo local de Supabase API)
+  # ==========================================================================
+  # Expone la misma interfaz REST que Supabase (PostgreSQL + PostgREST).
+  # n8n le habla por http://postgrest:3000 con los mismos headers que usaría
+  # con Supabase cloud.
+  # ==========================================================================
+  postgrest:
+    image: postgrest/postgrest:v12.2.0
+    container_name: bimeg-postgrest
+    restart: always
+    profiles: ["local"]
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      # Sin JWT secret: requests sin auth caen al rol anon (que tiene los
+      # grants necesarios vía db/init-local.sql).
+    networks:
+      - bimeg-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
+# ============================================================================
+# Red interna privada
+# Los servicios se resuelven entre sí por hostname (= nombre del servicio):
+#   n8n → scraper-service:8000
+#   n8n → postgrest:3000         (modo local)
+#   postgrest → postgres:5432    (modo local)
+# ============================================================================
+networks:
+  bimeg-net:
+    driver: bridge

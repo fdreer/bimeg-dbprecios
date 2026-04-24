@@ -1,0 +1,40 @@
+# Secretos y entorno
+.env
+.env.local
+.env.*.local
+
+# Datos persistidos de n8n (incluye DB sqlite, credenciales encriptadas, etc.)
+n8n_data/
+
+# Datos persistidos de postgres local (solo existe en modo dev)
+postgres_data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+
+# Playwright
+playwright-report/
+test-results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/

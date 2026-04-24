@@ -136,6 +136,59 @@ class TestParseProductPage:
 # _filter_product_urls (parsing del sitemap)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# scrape_sitemap_source (orchestrator)
+# ---------------------------------------------------------------------------
+
+class TestScrapeSitemapSource:
+    async def test_returns_products_scraped_from_sitemap(self):
+        from unittest.mock import AsyncMock, patch
+        import scraper
+
+        xml_text = _load_xml()
+        html_text = _load_html()
+        source = SitemapPageSource(
+            name="guanzetti",
+            enabled=True,
+            sitemap_url="https://www.guanzetti.com.ar/sitemap.xml",
+            empresa="Guanzetti S.A.",
+            proveedor="Guanzetti",
+            delay_seconds=0.0,
+        )
+
+        def fake_fetch(url, client, max_retries=3):
+            return xml_text if url == source.sitemap_url else html_text
+
+        with patch.object(scraper, "_fetch_text", new=AsyncMock(side_effect=fake_fetch)):
+            products = await scraper.scrape_sitemap_source(source)
+
+        assert len(products) == 2
+        assert all(p["fuente"] == "guanzetti" for p in products)
+        assert all(p["empresa"] == "Guanzetti S.A." for p in products)
+
+    async def test_returns_empty_list_when_sitemap_unreachable(self):
+        from unittest.mock import AsyncMock, patch
+        import scraper
+
+        source = SitemapPageSource(
+            name="guanzetti",
+            enabled=True,
+            sitemap_url="https://www.guanzetti.com.ar/sitemap.xml",
+            empresa="Guanzetti S.A.",
+            proveedor="Guanzetti",
+            delay_seconds=0.0,
+        )
+
+        with patch.object(scraper, "_fetch_text", new=AsyncMock(return_value=None)):
+            products = await scraper.scrape_sitemap_source(source)
+
+        assert products == []
+
+
+# ---------------------------------------------------------------------------
+# _filter_product_urls (parsing del sitemap)
+# ---------------------------------------------------------------------------
+
 class TestFilterProductUrls:
     def test_filters_only_product_urls(self):
         from scraper import _filter_product_urls
