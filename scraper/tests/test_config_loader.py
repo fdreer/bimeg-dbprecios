@@ -66,3 +66,25 @@ class TestSourcesConfigWithSitemap:
     def test_find_source_returns_none_when_missing(self):
         config = SourcesConfig()
         assert find_source(config, "nonexistent") is None
+
+
+class TestLoadSourcesWithSitemap:
+    def test_yaml_round_trip(self, tmp_path):
+        yml = tmp_path / "sources.yml"
+        yml.write_text(
+            "sitemap_pages:\n"
+            "  - name: guanzetti\n"
+            "    enabled: true\n"
+            "    sitemap_url: https://www.guanzetti.com.ar/sitemap.xml\n"
+            "    empresa: Guanzetti S.A.\n"
+            "    proveedor: Guanzetti\n",
+            encoding="utf-8",
+        )
+        config = load_sources(path=yml)
+        assert len(config.sitemap_pages) == 1
+        src = config.sitemap_pages[0]
+        assert src.name == "guanzetti"
+        assert src.type == "sitemap"
+        assert src.sitemap_url == "https://www.guanzetti.com.ar/sitemap.xml"
+        assert src.concurrency == 5
+        assert src.delay_seconds == 0.5
