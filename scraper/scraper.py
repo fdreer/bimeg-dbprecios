@@ -79,6 +79,9 @@ async def scrape_sitemap_source(source: SitemapPageSource) -> list[dict[str, Any
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    for r in results:
+        if isinstance(r, Exception):
+            log.error("Unexpected exception scraping a product: %s", r, exc_info=r)
     productos = [r for r in results if isinstance(r, dict)]
     skipped = len(product_urls) - len(productos)
     log.info(
