@@ -114,6 +114,9 @@ class TestParseProductPage:
         assert result["empresa"] == "Guanzetti S.A."
         assert result["proveedor"] == "Guanzetti"
         assert result["fuente"] == "guanzetti"
+        assert result["marca"] is None
+        assert result["categoria"] is None
+        assert result["unidad_medida"] is None
 
     def test_returns_none_when_no_description(self):
         from scraper import _parse_product_page
