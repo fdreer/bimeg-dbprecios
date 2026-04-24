@@ -1,0 +1,103 @@
+# ============================================================================
+# bimeg-dbprecios — configuración de fuentes
+# ============================================================================
+# Declarativo. Agregá / quitá / deshabilitá fuentes editando este archivo.
+# Tras cualquier cambio, reiniciar el container scraper-service para recargar:
+#
+#   docker-compose restart scraper-service
+#
+# ----------------------------------------------------------------------------
+# Formato de valores ${NOMBRE_VAR}:
+#   Los placeholders ${...} se reemplazan en runtime por el valor de la env
+#   var correspondiente del container. Ideal para API keys.
+#
+# Campo enabled:
+#   Poné false para deshabilitar una fuente sin borrarla.
+#
+# NOTA: las tres fuentes de abajo son EJEMPLOS PLACEHOLDER — las URLs, los
+# selectores y los field_mappings son ilustrativos. Se reemplazan por fuentes
+# reales cuando se implemente la lógica de scraping.
+# ============================================================================
+
+# ============================================================================
+# APIs REST
+# ----------------------------------------------------------------------------
+# Consumidas directamente por n8n (nodo HTTP Request), no por el scraper.
+# El workflow hace el mapeo de field_mappings usando un nodo Set / Code.
+# ============================================================================
+apis:
+  - name: "ejemplo-api"
+    enabled: false                                    # deshabilitado hasta que haya una real
+    endpoint: "https://api.ejemplo.com/v1/productos"
+    auth_header: "Authorization"
+    auth_value: "Bearer ${EJEMPLO_API_KEY}"
+    field_mappings:
+      descripcion:     "nombre"
+      precio:          "precio_unitario"
+      categoria:       "categoria.nombre"
+      codigo_producto: "sku"
+      marca:           "marca.nombre"
+      unidad_medida:   "unidad"
+    empresa: "Empresa Ejemplo S.A."
+    proveedor: "Proveedor Ejemplo"
+
+
+# ============================================================================
+# Páginas HTML estáticas
+# ----------------------------------------------------------------------------
+# Sin JavaScript — el HTML que devuelve el servidor ya tiene los productos.
+# El scraper hace httpx.get + BeautifulSoup.
+# ============================================================================
+static_pages:
+  - name: "ejemplo-tienda-estatica"
+    enabled: false
+    base_url: "https://tiendaestatica.ejemplo.com.ar/productos"
+    selectores:
+      descripcion:     ".product-title"
+      precio:          ".product-price"
+      codigo_producto: "[data-sku]"
+      url_imagen:      ".product-image img"
+      categoria:       ".breadcrumb__current"
+      marca:           ".product-brand"
+    empresa: "Tienda Estática Ejemplo"
+    proveedor: "Tienda Estática Ejemplo"
+    marca: ""                                         # se lee del selector si está vacío
+
+
+# ============================================================================
+# Páginas dinámicas (JavaScript)
+# ----------------------------------------------------------------------------
+# Productos cargados por JS (React / Vue / infinite scroll / etc.).
+# El scraper usa Playwright headless con Chromium.
+# ============================================================================
+dynamic_pages:
+  - name: "ejemplo-tienda-dinamica"
+    enabled: false
+    base_url: "https://tiendadinamica.ejemplo.com.ar/construccion"
+    selectores:
+      descripcion:     "[data-testid='product-name']"
+      precio:          "[data-testid='product-price']"
+      codigo_producto: "[data-product-id]"
+      url_imagen:      "[data-testid='product-image']"
+      categoria:       "[data-testid='breadcrumb-current']"
+      marca:           "[data-testid='product-brand']"
+    empresa: "Tienda Dinámica Ejemplo"
+    proveedor: "Tienda Dinámica Ejemplo"
+    marca: ""
+
+
+# ============================================================================
+# Páginas indexadas por sitemap XML
+# ----------------------------------------------------------------------------
+# El scraper descarga el sitemap, filtra URLs /product/ y scrapea cada página
+# de detalle. Sin Playwright — el sitio es server-side rendered.
+# Deduplicación automática: el sitemap lista cada producto una sola vez.
+# ============================================================================
+sitemap_pages:
+  - name: "guanzetti"
+    enabled: true
+    sitemap_url: "https://www.guanzetti.com.ar/sitemap.xml"
+    empresa: "Guanzetti S.A."
+    proveedor: "Guanzetti"
+    concurrency: 5
+    delay_seconds: 0.5
