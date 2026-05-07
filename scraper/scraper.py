@@ -2,6 +2,7 @@
 Lógica de scraping.
 
 Implementaciones:
+    - scrape_api_source(): APIs REST VTEX IO Intelligent Search (Easy, El Amigo).
     - scrape_sitemap_source(): sitemap XML → páginas de detalle (httpx async + BeautifulSoup).
       Usado para guanzetti.com.ar (TiendaPower, server-side rendered).
 
@@ -16,11 +17,12 @@ import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.parse import quote, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, NavigableString
 
-from config_loader import DynamicPageSource, SitemapPageSource, StaticPageSource
+from config_loader import ApiSource, DynamicPageSource, SitemapPageSource, StaticPageSource
 
 log = logging.getLogger("scraper")
 
@@ -45,10 +47,269 @@ log = logging.getLogger("scraper")
 
 
 # ============================================================================
+# Scraper de API REST (VTEX IO Intelligent Search)
+# ============================================================================
+
+async def scrape_api_source(source: ApiSource, limit: int | None = None) -> list[dict[str, Any]]:
+    """Descarga y normaliza productos desde una API REST VTEX IO Intelligent Search."""
+    if source.api_format == "vtex_io_categories":
+        return await _scrape_vtex_io_by_categories(source, limit)
+    return await _scrape_vtex_io(source, limit)
+
+
+async def _scrape_vtex_io(source: ApiSource, limit: int | None = None) -> list[dict[str, Any]]:
+    """
+    Pagina la API VTEX IO Intelligent Search.
+
+    Respuesta: {"products": [...], "recordsFiltered": N, "pagination": {...}}
+    Paginación: ?page=1&count=50, ?page=2&count=50, ... hasta lista vacía o < page_size.
+    """
+    page_size = source.page_size
+    all_products: list[dict[str, Any]] = []
+    page = 1
+
+    parsed = urlparse(source.endpoint)
+    store_base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    async with httpx.AsyncClient(
+        timeout=30.0,
+        follow_redirects=True,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; bimeg-dbprecios/1.0)",
+            "Accept": "application/json",
+        },
+    ) as client:
+        while True:
+            url = f"{source.endpoint}?page={page}&count={page_size}"
+            log.info("[%s] Fetching page=%d count=%d", source.name, page, page_size)
+
+            data = await _fetch_json(url, client)
+            if not isinstance(data, dict):
+                log.error("[%s] Respuesta inesperada en page=%d", source.name, page)
+                break
+
+            products = data.get("products", [])
+            if not products:
+                log.info("[%s] Página vacía en page=%d — fin", source.name, page)
+                break
+
+            for product in products:
+                all_products.extend(_parse_vtex_io_product(product, source, store_base_url))
+
+            log.info("[%s] Página %d: %d productos raw → %d acumulados",
+                     source.name, page, len(products), len(all_products))
+
+            if limit is not None and len(all_products) >= limit:
+                all_products = all_products[:limit]
+                log.info("[%s] Límite %d alcanzado", source.name, limit)
+                break
+
+            if len(products) < page_size:
+                log.info("[%s] Última página (%d < %d) — fin", source.name, len(products), page_size)
+                break
+
+            page += 1
+            await asyncio.sleep(0.1)
+
+    log.info("[%s] Total productos: %d", source.name, len(all_products))
+    return all_products
+
+
+def _parse_vtex_io_product(
+    product: dict[str, Any],
+    source: ApiSource,
+    store_base_url: str,
+) -> list[dict[str, Any]]:
+    """Normaliza un producto VTEX IO al formato estándar. Una fila por item/SKU."""
+    brand = product.get("brand") or None
+    if brand == "-":
+        brand = None
+
+    # La primera categoría es la más específica (hoja del árbol)
+    categories = product.get("categories", [])
+    categoria = categories[0].strip("/").split("/")[-1] if categories else None
+
+    link = product.get("link", "")
+    url_producto = f"{store_base_url}{link}" if link else None
+
+    results = []
+    for item in product.get("items", []):
+        sellers = item.get("sellers", [])
+        offer = sellers[0].get("commertialOffer", {}) if sellers else {}
+
+        precio = offer.get("Price")
+        if precio is None:
+            continue  # sin precio → no vendible
+
+        images = item.get("images", [])
+        is_available = offer.get("IsAvailable") or (offer.get("AvailableQuantity") or 0) > 0
+
+        results.append({
+            "codigo_producto": item.get("itemId"),
+            "descripcion":     product.get("productName", ""),
+            "precio":          float(precio),
+            "disponibilidad":  "Disponible" if is_available else "Sin stock",
+            "url_producto":    url_producto,
+            "url_imagen":      images[0]["imageUrl"] if images else None,
+            "categoria":       categoria,
+            "empresa":         source.empresa,
+            "marca":           brand,
+            "proveedor":       source.proveedor,
+            "unidad_medida":   item.get("measurementUnit"),
+            "fuente":          source.name,
+        })
+
+    return results
+
+
+async def _scrape_vtex_io_by_categories(
+    source: ApiSource, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """
+    Scrapea el catálogo VTEX IO completo iterando cada categoría hoja en paralelo.
+
+    Estrategia: la búsqueda global de VTEX IO cap a 2500 resultados (página 50).
+    Al filtrar por categoría la misma API devuelve resultados sin cap porque cada
+    categoría hoja tiene < 2500 productos. Se procesan N categorías en paralelo
+    y se deduplica por productId al final.
+    """
+    parsed = urlparse(source.endpoint)
+    store_base_url = f"{parsed.scheme}://{parsed.netloc}"
+    category_tree_url = f"{store_base_url}/api/catalog_system/pub/category/tree/10"
+    concurrency = getattr(source, "concurrency", 3)
+
+    async with httpx.AsyncClient(
+        timeout=30.0,
+        follow_redirects=True,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; bimeg-dbprecios/1.0)",
+            "Accept": "application/json",
+        },
+    ) as client:
+        tree = await _fetch_json(category_tree_url, client)
+        if not isinstance(tree, list):
+            log.error("[%s] Category tree fetch failed", source.name)
+            return []
+
+        leaf_categories = _collect_leaf_categories(tree)
+        total_cats = len(leaf_categories)
+
+        # limit en modo categorías = cuántas categorías procesar (útil para tests rápidos)
+        if limit is not None:
+            leaf_categories = leaf_categories[:limit]
+        log.info("[%s] %d/%d leaf categories — concurrency=%d",
+                 source.name, len(leaf_categories), total_cats, concurrency)
+
+        sem = asyncio.Semaphore(concurrency)
+        tasks = [
+            _fetch_category_raw(source, cat, client, sem)
+            for cat in leaf_categories
+        ]
+        raw_lists = await asyncio.gather(*tasks)
+
+    # Deduplicar por productId y parsear
+    seen_product_ids: set[str] = set()
+    all_products: list[dict[str, Any]] = []
+    for raw_products in raw_lists:
+        for product_id, product in raw_products:
+            if product_id in seen_product_ids:
+                continue
+            seen_product_ids.add(product_id)
+            all_products.extend(_parse_vtex_io_product(product, source, store_base_url))
+
+    log.info("[%s] Total productos únicos: %d", source.name, len(all_products))
+    return all_products
+
+
+async def _fetch_category_raw(
+    source: ApiSource,
+    cat: dict[str, Any],
+    client: httpx.AsyncClient,
+    sem: asyncio.Semaphore,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Pagina una categoría y devuelve lista de (productId, product_dict) sin parsear."""
+    cat_name = cat["name"]
+    results: list[tuple[str, dict[str, Any]]] = []
+    page = 1
+
+    async with sem:
+        while True:
+            url = (
+                f"{source.endpoint}"
+                f"?query={quote(cat_name)}&map=c"
+                f"&page={page}&count={source.page_size}"
+            )
+            data = await _fetch_json(url, client)
+            if not isinstance(data, dict):
+                break
+
+            products = data.get("products", [])
+            if not products:
+                break
+
+            for product in products:
+                results.append((str(product.get("productId", "")), product))
+
+            if len(products) < source.page_size:
+                break
+            page += 1
+            await asyncio.sleep(0.05)
+
+    log.debug("[%s] cat=%r → %d raw products", source.name, cat_name, len(results))
+    return results
+
+
+def _collect_leaf_categories(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Devuelve recursivamente sólo las categorías sin hijos (hojas del árbol)."""
+    leaves: list[dict[str, Any]] = []
+    for node in nodes:
+        children = node.get("children") or []
+        if not children:
+            leaves.append(node)
+        else:
+            leaves.extend(_collect_leaf_categories(children))
+    return leaves
+
+
+async def _fetch_json(url: str, client: httpx.AsyncClient, max_retries: int = 5) -> Any:
+    """GET url, devuelve JSON parseado o None en error permanente.
+
+    Errores 4xx → falla inmediata (no reintentar, son errores permanentes).
+    Errores 5xx y de red → reintentar con backoff exponencial.
+    """
+    for attempt in range(max_retries):
+        try:
+            resp = await client.get(url)
+            if resp.status_code in (400, 404):
+                return None  # fin de paginación o recurso inexistente — no reintentar
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as exc:
+            # 5xx u otros códigos inesperados
+            if attempt == max_retries - 1:
+                log.error("HTTP error fetching %s: %s", url, exc)
+                return None
+            await asyncio.sleep(2 ** attempt)
+        except httpx.RequestError as exc:
+            # Errores de red (DNS, timeout, conexión) — reintentar con más paciencia
+            if attempt == max_retries - 1:
+                log.error("Request error fetching %s: %s", url, exc)
+                return None
+            wait = min(2 ** attempt * 2, 30)  # 2s, 4s, 8s, 16s, 30s
+            log.warning("Request error (attempt %d/%d) fetching %s — retrying in %ds: %s",
+                        attempt + 1, max_retries, url, wait, exc)
+            await asyncio.sleep(wait)
+        except Exception as exc:
+            log.error("Error inesperado en _fetch_json %s: %s", url, exc)
+            return None
+    return None
+
+
+# ============================================================================
 # Scraper de sitemap (guanzetti.com.ar / TiendaPower)
 # ============================================================================
 
-async def scrape_sitemap_source(source: SitemapPageSource) -> list[dict[str, Any]]:
+async def scrape_sitemap_source(source: SitemapPageSource, limit: int | None = None) -> list[dict[str, Any]]:
     """
     Scrapea un catálogo completo usando el sitemap XML como índice.
 
@@ -72,6 +333,9 @@ async def scrape_sitemap_source(source: SitemapPageSource) -> list[dict[str, Any
 
         product_urls = _filter_product_urls(sitemap_xml)
         log.info("[%s] Found %d product URLs in sitemap", source.name, len(product_urls))
+        if limit is not None:
+            product_urls = product_urls[:limit]
+            log.info("[%s] Limited to %d URLs", source.name, limit)
 
         tasks = [
             _scrape_product_with_semaphore(url, source, client, sem)
@@ -108,14 +372,14 @@ async def _scrape_product_with_semaphore(
 async def _fetch_text(
     url: str,
     client: httpx.AsyncClient,
-    max_retries: int = 3,
+    max_retries: int = 5,
 ) -> str | None:
     """GET url con reintentos exponenciales. Devuelve None en error permanente."""
     for attempt in range(max_retries):
         try:
             resp = await client.get(url)
-            if resp.status_code == 404:
-                log.warning("404 — skipping: %s", url)
+            if resp.status_code in (400, 404):
+                log.warning("%d — skipping: %s", resp.status_code, url)
                 return None
             resp.raise_for_status()
             return resp.text
@@ -128,7 +392,10 @@ async def _fetch_text(
             if attempt == max_retries - 1:
                 log.error("Request error fetching %s: %s", url, exc)
                 return None
-            await asyncio.sleep(2 ** attempt)
+            wait = min(2 ** attempt * 2, 30)
+            log.warning("Request error (attempt %d/%d) fetching %s — retrying in %ds: %s",
+                        attempt + 1, max_retries, url, wait, exc)
+            await asyncio.sleep(wait)
     return None
 
 

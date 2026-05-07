@@ -26,6 +26,24 @@
 # El workflow hace el mapeo de field_mappings usando un nodo Set / Code.
 # ============================================================================
 apis:
+  - name: "easy"
+    enabled: true
+    endpoint: "https://www.easy.com.ar/api/io/_v/api/intelligent-search/product_search"
+    api_format: "vtex_io_categories"
+    page_size: 50
+    concurrency: 5
+    empresa: "Easy S.A."
+    proveedor: "Easy"
+
+  - name: "elamigo"
+    enabled: true
+    endpoint: "https://elamigo.com.ar/api/io/_v/api/intelligent-search/product_search"
+    api_format: "vtex_io_categories"
+    page_size: 50
+    concurrency: 5
+    empresa: "El Amigo S.A."
+    proveedor: "El Amigo"
+
   - name: "ejemplo-api"
     enabled: false                                    # deshabilitado hasta que haya una real
     endpoint: "https://api.ejemplo.com/v1/productos"
@@ -95,7 +113,7 @@ dynamic_pages:
 # ============================================================================
 sitemap_pages:
   - name: "guanzetti"
-    enabled: true
+    enabled: false
     sitemap_url: "https://www.guanzetti.com.ar/sitemap.xml"
     empresa: "Guanzetti S.A."
     proveedor: "Guanzetti"

@@ -43,6 +43,9 @@ class ApiSource(BaseModel):
     name: str
     enabled: bool = True
     endpoint: str
+    api_format: Literal["vtex_io", "vtex_io_categories"] = "vtex_io"
+    page_size: int = 50
+    concurrency: int = 3
     auth_header: str | None = None
     auth_value: str | None = None
     field_mappings: dict[str, str] = Field(default_factory=dict)
