@@ -5,7 +5,7 @@
 # los browsers (Chromium, Firefox, WebKit) y todas las dependencias nativas
 # necesarias (libs de X11, fonts, etc.).
 # ============================================================================
-FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
+FROM mcr.microsoft.com/playwright/python:v1.59.0-jammy
 
 WORKDIR /app
 

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.guanzetti.com.ar)",
+      "Bash(docker-compose exec *)"
+    ]
+  }
+}

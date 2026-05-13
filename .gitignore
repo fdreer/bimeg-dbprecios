@@ -1,5 +1,6 @@
 # Secretos y entorno
 .env
+.mcp.json
 .env.local
 .env.*.local
 

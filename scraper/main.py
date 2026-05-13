@@ -4,6 +4,7 @@ API HTTP del microservicio scraper.
 Endpoints:
     GET  /health              Health check.
     GET  /sources             Devuelve sources.yml parseado como JSON.
+    POST /scrape/api          Scrapea fuentes tipo api (VTEX, etc.).
     POST /scrape/static       Scrapea una página estática (stub).
     POST /scrape/dynamic      Scrapea una página dinámica (stub).
     POST /scrape/sitemap      Scrapea fuentes tipo sitemap (httpx + BeautifulSoup).
@@ -78,6 +79,7 @@ def _startup() -> None:
 
 class ScrapeRequest(BaseModel):
     source_name: str
+    limit: int | None = None  # para desarrollo: limitar cuántas URLs se procesan
 
 
 class SourceDescriptor(BaseModel):
@@ -119,6 +121,24 @@ def list_sources() -> list[SourceDescriptor]:
         )
         for src in config.enabled_sources()
     ]
+
+
+@app.post("/scrape/api")
+async def scrape_api(req: ScrapeRequest) -> list[dict[str, Any]]:
+    """Ejecuta el scraper de API REST (ej: VTEX/Easy) para la fuente indicada."""
+    config = get_config()
+    source = find_source(config, req.source_name)
+
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"Source '{req.source_name}' not found")
+    if not isinstance(source, ApiSource):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source '{req.source_name}' is not an API source (type={source.type})",
+        )
+
+    log.info("Scraping API source: %s (limit=%s)", source.name, req.limit)
+    return await scraper.scrape_api_source(source, limit=req.limit)
 
 
 @app.post("/scrape/static")
@@ -171,12 +191,5 @@ async def scrape_sitemap(req: ScrapeRequest) -> list[dict[str, Any]]:
             detail=f"Source '{req.source_name}' is not a sitemap source (type={source.type})",
         )
 
-    log.info("Scraping sitemap source: %s", source.name)
-    return await scraper.scrape_sitemap_source(source)
-
-
-# ============================================================================
-# Nota: las fuentes de tipo "api" NO se consumen desde este servicio.
-# n8n las consulta directamente con su nodo HTTP Request nativo, que es más
-# flexible y permite manejar auth, paginación y transformaciones sin código.
-# ============================================================================
+    log.info("Scraping sitemap source: %s (limit=%s)", source.name, req.limit)
+    return await scraper.scrape_sitemap_source(source, limit=req.limit)

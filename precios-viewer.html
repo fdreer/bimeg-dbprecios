@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>bimeg-dbprecios — Visor de Precios</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; }
+  header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 1.2rem; font-weight: 600; }
+  header .badge { background: #e94560; color: #fff; border-radius: 999px; padding: 2px 10px; font-size: 0.75rem; }
+  .toolbar { display: flex; gap: 12px; padding: 16px 24px; background: #fff; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; align-items: center; }
+  .toolbar input, .toolbar select { padding: 7px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.875rem; }
+  .toolbar input { flex: 1; min-width: 200px; }
+  .stats { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; }
+  .stat-card { background: #fff; border-radius: 8px; padding: 12px 20px; border: 1px solid #e0e0e0; min-width: 160px; }
+  .stat-card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; color: #1a1a2e; }
+  .table-wrap { padding: 0 24px 24px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0; font-size: 0.82rem; }
+  thead tr { background: #1a1a2e; color: #fff; }
+  th { padding: 10px 12px; text-align: left; font-weight: 500; white-space: nowrap; }
+  td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  tr:hover td { background: #fafafa; }
+  .precio { font-weight: 600; color: #1a1a2e; }
+  .badge-disp { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; }
+  .disp-ok { background: #d4edda; color: #155724; }
+  .disp-no { background: #f8d7da; color: #721c24; }
+  .disp-other { background: #fff3cd; color: #856404; }
+  .pager { display: flex; gap: 8px; align-items: center; padding: 12px 24px; justify-content: flex-end; }
+  .pager button { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 0.85rem; }
+  .pager button:disabled { opacity: 0.4; cursor: default; }
+  .pager button:hover:not(:disabled) { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+  .pager .info { font-size: 0.8rem; color: #666; }
+  .loading { text-align: center; padding: 40px; color: #888; }
+  .fuente-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; background: #e8eaf6; color: #3949ab; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>bimeg-dbprecios</h1>
+  <span class="badge" id="total-badge">cargando…</span>
+  <span style="margin-left:auto;font-size:0.75rem;opacity:0.7" id="last-update"></span>
+</header>
+
+<div class="stats" id="stats-row"></div>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Buscar por descripción…" oninput="onSearch()">
+  <select id="fuente-filter" onchange="onFilter()">
+    <option value="">Todas las fuentes</option>
+  </select>
+  <select id="categoria-filter" onchange="onFilter()">
+    <option value="">Todas las categorías</option>
+  </select>
+  <select id="disp-filter" onchange="onFilter()">
+    <option value="">Disponibilidad: todas</option>
+    <option value="Disponible">Solo disponibles</option>
+  </select>
+  <select id="sort" onchange="onFilter()">
+    <option value="precio">Precio ↑</option>
+    <option value="precio.desc">Precio ↓</option>
+    <option value="descripcion">Nombre A-Z</option>
+  </select>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Descripción</th>
+        <th>Fuente</th>
+        <th>Categoría</th>
+        <th>Marca</th>
+        <th>Precio</th>
+        <th>Precio s/imp.</th>
+        <th>Unidad</th>
+        <th>Disponibilidad</th>
+        <th>Código</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"><tr><td colspan="9" class="loading">Cargando datos…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="pager">
+  <span class="info" id="pager-info"></span>
+  <button id="btn-prev" onclick="prevPage()" disabled>← Anterior</button>
+  <button id="btn-next" onclick="nextPage()">Siguiente →</button>
+</div>
+
+<script>
+const API = 'http://localhost:3000';
+const PAGE_SIZE = 50;
+let offset = 0;
+let total = 0;
+let searchTimer = null;
+
+const fmt = n => n != null ? '$' + parseFloat(n).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
+
+function dispBadge(d) {
+  if (!d) return '<span class="badge-disp disp-other">—</span>';
+  if (d.toLowerCase().includes('disponible') && !d.toLowerCase().includes('no')) return `<span class="badge-disp disp-ok">${d}</span>`;
+  if (d.toLowerCase().includes('no')) return `<span class="badge-disp disp-no">${d}</span>`;
+  return `<span class="badge-disp disp-other">${d}</span>`;
+}
+
+async function fetchData() {
+  const search = document.getElementById('search').value.trim();
+  const fuente = document.getElementById('fuente-filter').value;
+  const cat = document.getElementById('categoria-filter').value;
+  const disp = document.getElementById('disp-filter').value;
+  const sort = document.getElementById('sort').value;
+
+  let params = [`limit=${PAGE_SIZE}`, `offset=${offset}`, `order=${sort}`];
+  if (search) params.push(`descripcion=ilike.*${encodeURIComponent(search)}*`);
+  if (fuente) params.push(`fuente=eq.${encodeURIComponent(fuente)}`);
+  if (cat) params.push(`categoria=eq.${encodeURIComponent(cat)}`);
+  if (disp) params.push(`disponibilidad=eq.${encodeURIComponent(disp)}`);
+
+  const url = `${API}/productos?${params.join('&')}`;
+  const res = await fetch(url, { headers: { 'Range-Unit': 'items', 'Range': `${offset}-${offset+PAGE_SIZE-1}`, 'Prefer': 'count=exact', 'apikey': '', 'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWxvY2FsIn0.9f-CsWfe5RGzv4zv7CdjGRiY1o9n6_sW84LYciOu_d0' } });
+  const range = res.headers.get('Content-Range') || '';
+  const m = range.match(/\/(\d+)/);
+  if (m) total = parseInt(m[1]);
+  return res.json();
+}
+
+async function render() {
+  document.getElementById('tbody').innerHTML = '<tr><td colspan="9" class="loading">Cargando…</td></tr>';
+  let rows;
+  try { rows = await fetchData(); } catch(e) { document.getElementById('tbody').innerHTML = `<tr><td colspan="9" class="loading">Error: ${e.message}</td></tr>`; return; }
+  if (!rows.length) { document.getElementById('tbody').innerHTML = '<tr><td colspan="9" class="loading">Sin resultados.</td></tr>'; updatePager(); return; }
+  document.getElementById('tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td style="max-width:320px">${r.descripcion || '—'}</td>
+      <td><span class="fuente-tag">${r.fuente || '—'}</span></td>
+      <td>${r.categoria || '—'}</td>
+      <td>${r.marca || '—'}</td>
+      <td class="precio">${fmt(r.precio)}</td>
+      <td>${fmt(r.precio_sin_impuestos)}</td>
+      <td>${r.unidad_medida || '—'}</td>
+      <td>${dispBadge(r.disponibilidad)}</td>
+      <td style="color:#888">${r.codigo_producto || '—'}</td>
+    </tr>`).join('');
+  updatePager();
+}
+
+function updatePager() {
+  document.getElementById('pager-info').textContent = `${offset+1}–${Math.min(offset+PAGE_SIZE, total)} de ${total.toLocaleString('es-AR')}`;
+  document.getElementById('btn-prev').disabled = offset === 0;
+  document.getElementById('btn-next').disabled = offset + PAGE_SIZE >= total;
+  document.getElementById('total-badge').textContent = total.toLocaleString('es-AR') + ' productos';
+}
+
+function prevPage() { if (offset > 0) { offset -= PAGE_SIZE; render(); } }
+function nextPage() { if (offset + PAGE_SIZE < total) { offset += PAGE_SIZE; render(); } }
+function onSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset=0; render(); }, 350); }
+function onFilter() { offset = 0; render(); }
+
+async function loadFilters() {
+  try {
+    const [fuentes, cats, stats] = await Promise.all([
+      fetch(`${API}/productos?select=fuente&order=fuente`, {headers:{Authorization:'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWxvY2FsIn0.9f-CsWfe5RGzv4zv7CdjGRiY1o9n6_sW84LYciOu_d0'}}).then(r=>r.json()),
+      fetch(`${API}/productos?select=categoria&order=categoria`, {headers:{Authorization:'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWxvY2FsIn0.9f-CsWfe5RGzv4zv7CdjGRiY1o9n6_sW84LYciOu_d0'}}).then(r=>r.json()),
+      fetch(`${API}/productos?select=fuente,precio`, {headers:{Authorization:'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWxvY2FsIn0.9f-CsWfe5RGzv4zv7CdjGRiY1o9n6_sW84LYciOu_d0', 'Range-Unit':'items', Range:'0-9999'}}).then(r=>r.json()),
+    ]);
+    const fuenteSet = [...new Set(fuentes.map(r=>r.fuente).filter(Boolean))];
+    const catSet = [...new Set(cats.map(r=>r.categoria).filter(Boolean))].sort();
+    const fSelect = document.getElementById('fuente-filter');
+    fuenteSet.forEach(f => { const o = document.createElement('option'); o.value=f; o.textContent=f; fSelect.appendChild(o); });
+    const cSelect = document.getElementById('categoria-filter');
+    catSet.forEach(c => { const o = document.createElement('option'); o.value=c; o.textContent=c; cSelect.appendChild(o); });
+
+    // Stats by fuente
+    const byFuente = {};
+    stats.forEach(r => { if (!byFuente[r.fuente]) byFuente[r.fuente]={count:0,min:Infinity,max:-Infinity}; byFuente[r.fuente].count++; if(r.precio<byFuente[r.fuente].min)byFuente[r.fuente].min=r.precio; if(r.precio>byFuente[r.fuente].max)byFuente[r.fuente].max=r.precio; });
+    const statsHtml = Object.entries(byFuente).map(([f,v])=>`
+      <div class="stat-card">
+        <div class="label">${f}</div>
+        <div class="value">${v.count.toLocaleString('es-AR')}</div>
+        <div style="font-size:0.72rem;color:#888;margin-top:4px">Min ${fmt(v.min)} · Max ${fmt(v.max)}</div>
+      </div>`).join('');
+    document.getElementById('stats-row').innerHTML = statsHtml;
+    document.getElementById('last-update').textContent = 'Actualizado: ' + new Date().toLocaleString('es-AR');
+  } catch(e) { console.error(e); }
+}
+
+loadFilters();
+render();
+</script>
+</body>
+</html>
