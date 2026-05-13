@@ -6,7 +6,7 @@
       "name": "Schedule Trigger (06:00 daily)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 288],
+      "position": [0, 496],
       "parameters": {
         "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] }
       }
@@ -16,7 +16,7 @@
       "name": "GET /sources",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [224, 288],
+      "position": [224, 496],
       "parameters": { "method": "GET", "url": "={{ $env.SCRAPER_URL }}/sources", "options": {} }
     },
     {
@@ -24,7 +24,7 @@
       "name": "Split by source",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [448, 288],
+      "position": [448, 496],
       "parameters": { "batchSize": 1, "options": {} }
     },
     {
@@ -32,15 +32,64 @@
       "name": "All sources processed",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [672, 64],
+      "position": [672, 0],
       "parameters": {}
+    },
+    {
+      "id": "bc9d21c4-0989-4762-b3ff-4e9f53e9c99a",
+      "name": "GET /productos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [896, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/productos?order=fuente.asc,descripcion.asc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "09d125d1-805b-466b-8ec7-573b56206a5f",
+      "name": "Generate Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [1120, 0],
+      "parameters": {
+        "operation": "xlsx",
+        "options": { "fileName": "=precios-{{ $now.format('yyyy-MM-dd') }}.xlsx" }
+      }
+    },
+    {
+      "id": "3d7167d3-1da5-4dcb-ac35-03b7df7ca55b",
+      "name": "Send Report Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1344, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $env.REPORT_EMAIL_TO }}",
+        "subject": "=Precios BIMEG — {{ $now.format('dd/MM/yyyy') }}",
+        "emailType": "text",
+        "message": "Adjunto el reporte de precios del día.",
+        "options": {
+          "attachmentsUi": { "attachmentsBinary": [{ "property": "data" }] },
+          "senderName": "BIMEG Precios"
+        }
+      }
     },
     {
       "id": "9805c48f-42a2-4aed-be9e-61beaf006297",
       "name": "Switch on type",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
-      "position": [672, 256],
+      "position": [672, 464],
       "parameters": {
         "rules": {
           "values": [
@@ -90,7 +139,7 @@
       "name": "POST /scrape/api",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [896, 0],
+      "position": [896, 208],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/api",
@@ -105,7 +154,7 @@
       "name": "POST /scrape/static",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [896, 192],
+      "position": [896, 400],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/static",
@@ -120,7 +169,7 @@
       "name": "POST /scrape/dynamic",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [896, 384],
+      "position": [896, 592],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/dynamic",
@@ -135,7 +184,7 @@
       "name": "POST /scrape/sitemap",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [896, 576],
+      "position": [896, 784],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/sitemap",
@@ -150,7 +199,7 @@
       "name": "Merge branches",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [1120, 352],
+      "position": [1120, 464],
       "parameters": { "numberInputs": 4 }
     },
     {
@@ -158,7 +207,7 @@
       "name": "Pack products",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1344, 384],
+      "position": [1344, 496],
       "parameters": {
         "jsCode": "const items = $input.all();\nconst sourceName = $('Split by source').item.json.name;\nconst productos = items.map(i => i.json).filter(p => p && p.descripcion);\nreturn [{ json: { source_name: sourceName, productos, count: productos.length } }];"
       }
@@ -168,7 +217,7 @@
       "name": "DELETE old rows (Supabase)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1568, 384],
+      "position": [1568, 496],
       "parameters": {
         "method": "DELETE",
         "url": "={{ $env.SUPABASE_URL }}/productos",
@@ -189,7 +238,7 @@
       "name": "INSERT new rows (Supabase)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1792, 576],
+      "position": [1792, 688],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/productos",
@@ -209,66 +258,12 @@
       }
     },
     {
-      "id": "c7e8f9a0-b1c2-4d3e-8f9a-0b1c2d3e4f51",
+      "id": "d482f738-19d2-4820-9f59-0b04157331db",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, -288],
+      "position": [672, 1088],
       "parameters": {}
-    },
-    {
-      "id": "c7e8f9a0-b1c2-4d3e-8f9a-0b1c2d3e4f52",
-      "name": "GET /productos",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [2100, 64],
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/productos?order=fuente.asc,descripcion.asc",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}" }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "c7e8f9a0-b1c2-4d3e-8f9a-0b1c2d3e4f53",
-      "name": "Generate Excel",
-      "type": "n8n-nodes-base.spreadsheetFile",
-      "typeVersion": 1,
-      "position": [2324, 64],
-      "parameters": {
-        "operation": "toFile",
-        "fileFormat": "xlsx",
-        "options": {
-          "fileName": "=precios-{{ $now.format('yyyy-MM-dd') }}.xlsx"
-        }
-      }
-    },
-    {
-      "id": "c7e8f9a0-b1c2-4d3e-8f9a-0b1c2d3e4f54",
-      "name": "Send Report Email",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [2548, 64],
-      "parameters": {
-        "sendTo": "={{ $env.REPORT_EMAIL_TO }}",
-        "subject": "=Precios BIMEG — {{ $now.format('dd/MM/yyyy') }}",
-        "emailType": "text",
-        "message": "Adjunto el reporte de precios del día.",
-        "options": {
-          "attachmentsUi": {
-            "attachmentsBinary": [
-              { "property": "data" }
-            ]
-          },
-          "senderName": "BIMEG Precios"
-        }
-      }
     }
   ],
   "connections": {
@@ -280,6 +275,7 @@
         [{ "node": "Switch on type", "type": "main", "index": 0 }]
       ]
     },
+    "All sources processed": { "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]] },
     "Switch on type": {
       "main": [
         [{ "node": "POST /scrape/api", "type": "main", "index": 0 }],
@@ -296,30 +292,21 @@
     "Pack products": { "main": [[{ "node": "DELETE old rows (Supabase)", "type": "main", "index": 0 }]] },
     "DELETE old rows (Supabase)": { "main": [[{ "node": "INSERT new rows (Supabase)", "type": "main", "index": 0 }]] },
     "INSERT new rows (Supabase)": { "main": [[{ "node": "Split by source", "type": "main", "index": 0 }]] },
-    "All sources processed": {
-      "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]]
-    },
-    "Manual Trigger": {
-      "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]]
-    },
-    "GET /productos": {
-      "main": [[{ "node": "Generate Excel", "type": "main", "index": 0 }]]
-    },
-    "Generate Excel": {
-      "main": [[{ "node": "Send Report Email", "type": "main", "index": 0 }]]
-    }
+    "Manual Trigger": { "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]] },
+    "GET /productos": { "main": [[{ "node": "Generate Excel", "type": "main", "index": 0 }]] },
+    "Generate Excel": { "main": [[{ "node": "Send Report Email", "type": "main", "index": 0 }]] }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate",
     "availableInMCP": true
   },
-  "versionId": "092fe883-394e-49a1-82e9-8a294db12b0f",
+  "versionId": "7748535a-7137-4346-bd89-ce5743a59405",
   "pinData": {},
   "meta": {
-    "description": "Sincroniza precios de materiales de construcción desde APIs y páginas web a Supabase. Se ejecuta diariamente a las 06:00 hora local. Itera fuentes de sources.yml, scrapea, borra registros viejos e inserta los nuevos.",
-    "aiBuilderAssisted": true
+    "description": "Sincroniza precios de materiales de construcción desde APIs y páginas web a Supabase. Al finalizar, genera un Excel con todos los productos y lo envía por email. También acepta un Manual Trigger para enviar el reporte sin correr el scraping.",
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
   }
 }
