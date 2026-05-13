@@ -22,18 +22,15 @@ services:
   # n8n — orquestador de workflows
   # ==========================================================================
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:2.19.2
     container_name: bimeg-n8n
     restart: always
     ports:
       - "5678:5678"
     environment:
-      # ---- Autenticación básica de la UI ---------------------------------
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
-
-      # ---- Clave de encriptación interna (CRÍTICA para portabilidad) ------
+      # ---- Autenticación — n8n 2.x usa user management propio ------------
+      # En el primer run abre el wizard para crear la cuenta admin.
+      # N8N_BASIC_AUTH_ACTIVE fue removido en v2.x.
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
 
       # ---- Timezone para cron triggers ------------------------------------
@@ -47,12 +44,23 @@ services:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
       SCRAPER_URL: ${SCRAPER_URL}
+      REPORT_EMAIL_TO: ${REPORT_EMAIL_TO}
 
       # ---- API keys adicionales (agregar según sources.yml) ---------------
       # EJEMPLO_API_KEY: ${EJEMPLO_API_KEY}
 
       # ---- Misc -----------------------------------------------------------
       N8N_LOG_LEVEL: info
+
+      # ---- Seguridad: permite que el MCP server llame a la API local ------
+      # El MCP server interno de n8n hace llamadas a localhost:5678/api/...
+      # Sin esto, la SSRF protection bloquea esas llamadas.
+      N8N_BLOCK_NON_PUBLIC_IP: "false"
+
+      # ---- Permite acceder a $env en expresiones de nodos -----------------
+      # n8n 2.x bloquea $env por defecto. Necesario para que los nodos HTTP
+      # puedan leer SCRAPER_URL, SUPABASE_URL, SUPABASE_ANON_KEY, etc.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
     volumes:
       # Persistencia de workflows, credenciales (encriptadas con la key de
       # arriba), ejecuciones e historial. NO se commitea — vive en el host.
@@ -72,7 +80,9 @@ services:
       dockerfile: Dockerfile
     container_name: bimeg-scraper
     restart: always
-    # NO expose/ports: sólo accesible desde la red Docker interna.
+    # Puerto expuesto al host para desarrollo (Swagger UI en localhost:8000/docs)
+    ports:
+      - "8000:8000"
     environment:
       # ---- API keys de proveedores (agregar según sources.yml) ------------
       # EJEMPLO_API_KEY: ${EJEMPLO_API_KEY}
@@ -96,7 +106,7 @@ services:
   # En producción este servicio NO se levanta — la DB vive en Supabase cloud.
   # ==========================================================================
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: bimeg-postgres
     restart: always
     profiles: ["local"]
@@ -130,7 +140,7 @@ services:
   # con Supabase cloud.
   # ==========================================================================
   postgrest:
-    image: postgrest/postgrest:v12.2.0
+    image: postgrest/postgrest:v14.10
     container_name: bimeg-postgrest
     restart: always
     profiles: ["local"]
@@ -138,8 +148,35 @@ services:
       PGRST_DB_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-postgres}
       PGRST_DB_SCHEMA: public
       PGRST_DB_ANON_ROLE: anon
-      # Sin JWT secret: requests sin auth caen al rol anon (que tiene los
-      # grants necesarios vía db/init-local.sql).
+      # JWT secret para validar el token en SUPABASE_ANON_KEY.
+      # Debe coincidir con el secret usado para generar el JWT local.
+      PGRST_JWT_SECRET: "super-secret-local-jwt-key-bimeg-2026"
+    networks:
+      - bimeg-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==========================================================================
+  # adminer — UI web para explorar la base de datos local (solo en modo dev)
+  # ==========================================================================
+  # Acceder en: http://localhost:8080
+  #   Sistema:   PostgreSQL
+  #   Servidor:  postgres
+  #   Usuario:   postgres (o el valor de POSTGRES_USER)
+  #   Contraseña: ver .env → POSTGRES_PASSWORD
+  #   Base de datos: postgres
+  # ==========================================================================
+  adminer:
+    image: adminer:4.8.1
+    container_name: bimeg-adminer
+    restart: always
+    profiles: ["local"]
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha
     networks:
       - bimeg-net
     depends_on:
