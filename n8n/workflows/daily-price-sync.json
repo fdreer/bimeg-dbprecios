@@ -1,15 +1,88 @@
 {
+  "id": "p1sGXQQsBDuWHMX8",
   "name": "daily-price-sync",
+  "active": false,
+  "isArchived": false,
+  "versionId": "5123a76a-6c92-4a04-baea-77ce99c41286",
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "connections": {
+    "Schedule Trigger (06:00 daily)": {
+      "main": [[{"node": "GET /sources", "type": "main", "index": 0}]]
+    },
+    "GET /sources": {
+      "main": [[{"node": "Split by source", "type": "main", "index": 0}]]
+    },
+    "All sources processed": {
+      "main": [[{"node": "GET /productos", "type": "main", "index": 0}]]
+    },
+    "GET /productos": {
+      "main": [[{"node": "Format for Excel", "type": "main", "index": 0}]]
+    },
+    "Format for Excel": {
+      "main": [[{"node": "Generate Excel", "type": "main", "index": 0}]]
+    },
+    "Generate Excel": {
+      "main": [[{"node": "Compress Excel", "type": "main", "index": 0}]]
+    },
+    "Compress Excel": {
+      "main": [[{"node": "Send Report Email", "type": "main", "index": 0}]]
+    },
+    "Switch on type": {
+      "main": [
+        [{"node": "POST /scrape/api",     "type": "main", "index": 0}],
+        [{"node": "POST /scrape/static",  "type": "main", "index": 0}],
+        [{"node": "POST /scrape/dynamic", "type": "main", "index": 0}],
+        [{"node": "POST /scrape/sitemap", "type": "main", "index": 0}]
+      ]
+    },
+    "POST /scrape/api":     {"main": [[{"node": "Merge branches", "type": "main", "index": 0}]]},
+    "POST /scrape/static":  {"main": [[{"node": "Merge branches", "type": "main", "index": 1}]]},
+    "POST /scrape/dynamic": {"main": [[{"node": "Merge branches", "type": "main", "index": 2}]]},
+    "POST /scrape/sitemap": {"main": [[{"node": "Merge branches", "type": "main", "index": 3}]]},
+    "Merge branches": {
+      "main": [[{"node": "Pack products", "type": "main", "index": 0}]]
+    },
+    "Split by source": {
+      "main": [
+        [{"node": "All sources processed", "type": "main", "index": 0}],
+        [{"node": "Switch on type",        "type": "main", "index": 0}]
+      ]
+    },
+    "Pack products": {
+      "main": [[{"node": "DELETE old rows (Supabase)", "type": "main", "index": 0}]]
+    },
+    "DELETE old rows (Supabase)": {
+      "main": [[{"node": "INSERT new rows (Supabase)", "type": "main", "index": 0}]]
+    },
+    "INSERT new rows (Supabase)": {
+      "main": [[{"node": "Split by source", "type": "main", "index": 0}]]
+    },
+    "Manual Trigger": {
+      "main": [[{"node": "GET /productos", "type": "main", "index": 0}]]
+    }
+  },
   "nodes": [
     {
       "id": "4e2afb29-5f36-46fd-b189-b03c299fa62f",
       "name": "Schedule Trigger (06:00 daily)",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "typeVersion": 1.3,
       "position": [0, 496],
       "parameters": {
-        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] }
+        "rule": {"interval": [{"field": "cronExpression", "expression": "0 6 * * *"}]}
       }
+    },
+    {
+      "id": "d482f738-19d2-4820-9f59-0b04157331db",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [672, 1088],
+      "parameters": {}
     },
     {
       "id": "8c16710d-7385-44c0-93aa-8d3c4874ab68",
@@ -17,15 +90,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [224, 496],
-      "parameters": { "method": "GET", "url": "={{ $env.SCRAPER_URL }}/sources", "options": {} }
-    },
-    {
-      "id": "a5de821e-f92d-475f-876e-3fe7a5b217e1",
-      "name": "Split by source",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [448, 496],
-      "parameters": { "batchSize": 1, "options": {} }
+      "parameters": {"url": "={{ $env.SCRAPER_URL }}/sources", "options": {}}
     },
     {
       "id": "f49bb217-a798-48e5-bce6-5d9922c3f5a9",
@@ -42,16 +107,27 @@
       "typeVersion": 4.2,
       "position": [896, 0],
       "parameters": {
-        "method": "GET",
         "url": "={{ $env.SUPABASE_URL }}/productos?order=fuente.asc,descripcion.asc",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}" }
+            {"name": "apikey",        "value": "={{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"}
           ]
         },
         "options": {}
+      }
+    },
+    {
+      "id": "acfdece6-2e63-4ec8-8edf-8f297a720008",
+      "name": "Format for Excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst formatted = items.map(item => {\n  const r = item.json || {};\n  return {\n    \"Empresa\":              r.empresa              ?? \"\",\n    \"Código Producto\":      r.codigo_producto      ?? \"\",\n    \"Descripción\":          r.descripcion          ?? \"\",\n    \"Marca\":                r.marca                ?? \"\",\n    \"Tipo de Producto\":     r.tipo_producto        ?? \"\",\n    \"Familia\":              r.familia_producto     ?? \"\",\n    \"Subtipo\":              r.subtipo_producto     ?? \"\",\n    \"Categoría\":            r.categoria            ?? \"\",\n    \"Jerarquía Completa\":   r.categoria_completa   ?? \"\",\n    \"Precio\":               r.precio               ?? null,\n    \"Precio Lista\":         r.precio_lista         ?? null,\n    \"Precio sin Impuestos\": r.precio_sin_impuestos ?? null,\n    \"Disponibilidad\":       r.disponibilidad       ?? \"\",\n    \"Unidad\":               r.unidad_medida        ?? \"\",\n    \"Multiplicador\":        r.multiplicador_unidad ?? null,\n    \"URL Producto\":         r.url_producto         ?? \"\",\n  };\n});\nreturn formatted.map(json => ({ json }));"
       }
     },
     {
@@ -59,10 +135,22 @@
       "name": "Generate Excel",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
-      "position": [1120, 0],
+      "position": [1344, 0],
       "parameters": {
         "operation": "xlsx",
-        "options": { "fileName": "=precios-{{ $now.format('yyyy-MM-dd') }}.xlsx" }
+        "options": {"fileName": "=precios-{{ $now.format('yyyy-MM-dd') }}.xlsx"}
+      }
+    },
+    {
+      "id": "7691f9f4-6cfb-433b-994c-b3af16f06af8",
+      "name": "Compress Excel",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [1568, 0],
+      "parameters": {
+        "operation": "compress",
+        "outputFormat": "zip",
+        "fileName": "=precios-{{ $now.format('yyyy-MM-dd') }}.zip"
       }
     },
     {
@@ -70,7 +158,8 @@
       "name": "Send Report Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [1344, 0],
+      "position": [1792, 0],
+      "webhookId": "55d2eba5-d0ec-4d51-b1a4-e0c304da32a1",
       "parameters": {
         "resource": "message",
         "operation": "send",
@@ -79,10 +168,18 @@
         "emailType": "text",
         "message": "Adjunto el reporte de precios del día.",
         "options": {
-          "attachmentsUi": { "attachmentsBinary": [{ "property": "data" }] },
+          "attachmentsUi": {"attachmentsBinary": [{}]},
           "senderName": "BIMEG Precios"
         }
       }
+    },
+    {
+      "id": "a5de821e-f92d-475f-876e-3fe7a5b217e1",
+      "name": "Split by source",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [448, 496],
+      "parameters": {"options": {}}
     },
     {
       "id": "9805c48f-42a2-4aed-be9e-61beaf006297",
@@ -91,43 +188,40 @@
       "typeVersion": 3.2,
       "position": [672, 464],
       "parameters": {
+        "mode": "rules",
         "rules": {
           "values": [
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
-                "conditions": [{ "id": "cond-api", "leftValue": "={{ $json.type }}", "rightValue": "api", "operator": { "type": "string", "operation": "equals" } }],
+                "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+                "conditions": [{"id": "cond-api",     "leftValue": "={{ $json.type }}", "rightValue": "api",     "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
               },
-              "renameOutput": true,
-              "outputKey": "api"
+              "renameOutput": true, "outputKey": "api"
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
-                "conditions": [{ "id": "cond-static", "leftValue": "={{ $json.type }}", "rightValue": "static", "operator": { "type": "string", "operation": "equals" } }],
+                "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+                "conditions": [{"id": "cond-static",  "leftValue": "={{ $json.type }}", "rightValue": "static",  "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
               },
-              "renameOutput": true,
-              "outputKey": "static"
+              "renameOutput": true, "outputKey": "static"
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
-                "conditions": [{ "id": "cond-dynamic", "leftValue": "={{ $json.type }}", "rightValue": "dynamic", "operator": { "type": "string", "operation": "equals" } }],
+                "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+                "conditions": [{"id": "cond-dynamic", "leftValue": "={{ $json.type }}", "rightValue": "dynamic", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
               },
-              "renameOutput": true,
-              "outputKey": "dynamic"
+              "renameOutput": true, "outputKey": "dynamic"
             },
             {
               "conditions": {
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
-                "conditions": [{ "id": "cond-sitemap", "leftValue": "={{ $json.type }}", "rightValue": "sitemap", "operator": { "type": "string", "operation": "equals" } }],
+                "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1},
+                "conditions": [{"id": "cond-sitemap", "leftValue": "={{ $json.type }}", "rightValue": "sitemap", "operator": {"type": "string", "operation": "equals"}}],
                 "combinator": "and"
               },
-              "renameOutput": true,
-              "outputKey": "sitemap"
+              "renameOutput": true, "outputKey": "sitemap"
             }
           ]
         },
@@ -143,10 +237,9 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/api",
-        "sendBody": true,
-        "specifyBody": "json",
+        "sendBody": true, "specifyBody": "json",
         "jsonBody": "={\n  \"source_name\": \"{{ $json.name }}\"\n}",
-        "options": { "timeout": 600000 }
+        "options": {"timeout": 600000}
       }
     },
     {
@@ -158,8 +251,7 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/static",
-        "sendBody": true,
-        "specifyBody": "json",
+        "sendBody": true, "specifyBody": "json",
         "jsonBody": "={\n  \"source_name\": \"{{ $json.name }}\"\n}",
         "options": {}
       }
@@ -173,8 +265,7 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/dynamic",
-        "sendBody": true,
-        "specifyBody": "json",
+        "sendBody": true, "specifyBody": "json",
         "jsonBody": "={\n  \"source_name\": \"{{ $json.name }}\"\n}",
         "options": {}
       }
@@ -188,10 +279,9 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SCRAPER_URL }}/scrape/sitemap",
-        "sendBody": true,
-        "specifyBody": "json",
+        "sendBody": true, "specifyBody": "json",
         "jsonBody": "={\n  \"source_name\": \"{{ $json.name }}\"\n}",
-        "options": { "timeout": 600000 }
+        "options": {"timeout": 600000}
       }
     },
     {
@@ -200,7 +290,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [1120, 464],
-      "parameters": { "numberInputs": 4 }
+      "parameters": {"mode": "append", "numberInputs": 4}
     },
     {
       "id": "d5760fd8-94ea-45c0-8195-0afb3dba59cd",
@@ -209,6 +299,8 @@
       "typeVersion": 2,
       "position": [1344, 496],
       "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
         "jsCode": "const items = $input.all();\nconst sourceName = $('Split by source').item.json.name;\nconst productos = items.map(i => i.json).filter(p => p && p.descripcion);\nreturn [{ json: { source_name: sourceName, productos, count: productos.length } }];"
       }
     },
@@ -222,12 +314,14 @@
         "method": "DELETE",
         "url": "={{ $env.SUPABASE_URL }}/productos",
         "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "fuente", "value": "=eq.{{ $('Pack products').item.json.source_name }}" }] },
+        "queryParameters": {
+          "parameters": [{"name": "fuente", "value": "=eq.{{ $('Pack products').item.json.source_name }}"}]
+        },
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}" }
+            {"name": "apikey",        "value": "={{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"}
           ]
         },
         "options": {}
@@ -242,71 +336,23 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/productos",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $('Pack products').item.json.productos }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {"name": "apikey",        "value": "={{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"},
+            {"name": "Content-Type",  "value": "application/json"},
+            {"name": "Prefer",        "value": "return=minimal"}
           ]
         },
-        "options": { "response": { "response": { "neverError": true } } }
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Pack products').item.json.productos }}",
+        "options": {"response": {"response": {"neverError": true}}}
       }
-    },
-    {
-      "id": "d482f738-19d2-4820-9f59-0b04157331db",
-      "name": "Manual Trigger",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [672, 1088],
-      "parameters": {}
     }
   ],
-  "connections": {
-    "Schedule Trigger (06:00 daily)": { "main": [[{ "node": "GET /sources", "type": "main", "index": 0 }]] },
-    "GET /sources": { "main": [[{ "node": "Split by source", "type": "main", "index": 0 }]] },
-    "Split by source": {
-      "main": [
-        [{ "node": "All sources processed", "type": "main", "index": 0 }],
-        [{ "node": "Switch on type", "type": "main", "index": 0 }]
-      ]
-    },
-    "All sources processed": { "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]] },
-    "Switch on type": {
-      "main": [
-        [{ "node": "POST /scrape/api", "type": "main", "index": 0 }],
-        [{ "node": "POST /scrape/static", "type": "main", "index": 0 }],
-        [{ "node": "POST /scrape/dynamic", "type": "main", "index": 0 }],
-        [{ "node": "POST /scrape/sitemap", "type": "main", "index": 0 }]
-      ]
-    },
-    "POST /scrape/api": { "main": [[{ "node": "Merge branches", "type": "main", "index": 0 }]] },
-    "POST /scrape/static": { "main": [[{ "node": "Merge branches", "type": "main", "index": 1 }]] },
-    "POST /scrape/dynamic": { "main": [[{ "node": "Merge branches", "type": "main", "index": 2 }]] },
-    "POST /scrape/sitemap": { "main": [[{ "node": "Merge branches", "type": "main", "index": 3 }]] },
-    "Merge branches": { "main": [[{ "node": "Pack products", "type": "main", "index": 0 }]] },
-    "Pack products": { "main": [[{ "node": "DELETE old rows (Supabase)", "type": "main", "index": 0 }]] },
-    "DELETE old rows (Supabase)": { "main": [[{ "node": "INSERT new rows (Supabase)", "type": "main", "index": 0 }]] },
-    "INSERT new rows (Supabase)": { "main": [[{ "node": "Split by source", "type": "main", "index": 0 }]] },
-    "Manual Trigger": { "main": [[{ "node": "GET /productos", "type": "main", "index": 0 }]] },
-    "GET /productos": { "main": [[{ "node": "Generate Excel", "type": "main", "index": 0 }]] },
-    "Generate Excel": { "main": [[{ "node": "Send Report Email", "type": "main", "index": 0 }]] }
-  },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "binaryMode": "separate",
-    "availableInMCP": true
-  },
-  "versionId": "7748535a-7137-4346-bd89-ce5743a59405",
-  "pinData": {},
-  "meta": {
-    "description": "Sincroniza precios de materiales de construcción desde APIs y páginas web a Supabase. Al finalizar, genera un Excel con todos los productos y lo envía por email. También acepta un Manual Trigger para enviar el reporte sin correr el scraping.",
-    "aiBuilderAssisted": true,
-    "builderVariant": "mcp"
-  }
+  "tags": [],
+  "meta": {"aiBuilderAssisted": true, "builderVariant": "mcp"},
+  "description": "Sincroniza precios desde APIs y scraping a Supabase. Genera Excel (sin Fuente/Proveedor/SKU/EAN/Actualizado), lo comprime en ZIP y lo envía por email."
 }
