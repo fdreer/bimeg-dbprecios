@@ -47,17 +47,24 @@ ALTER TABLE productos ADD COLUMN IF NOT EXISTS precio_sin_impuestos NUMERIC(12, 
 ALTER TABLE productos ADD COLUMN IF NOT EXISTS ean                  VARCHAR(50);
 ALTER TABLE productos ADD COLUMN IF NOT EXISTS multiplicador_unidad NUMERIC(10, 3);
 ALTER TABLE productos ADD COLUMN IF NOT EXISTS tipo_producto        VARCHAR(200);
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS familia_producto     VARCHAR(200);
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS subtipo_producto     VARCHAR(200);
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS categoria_completa   TEXT;
 
 COMMENT ON COLUMN productos.item_id              IS 'ID de SKU/variante en VTEX (itemId).';
 COMMENT ON COLUMN productos.nombre_completo      IS 'Nombre completo del SKU incluyendo variante (nameComplete en VTEX).';
 COMMENT ON COLUMN productos.precio_lista         IS 'Precio de lista antes de descuentos (ListPrice en VTEX).';
-COMMENT ON COLUMN productos.precio_sin_impuestos IS 'Precio neto sin IVA (price_wo_taxes en VTEX).';
+COMMENT ON COLUMN productos.precio_sin_impuestos IS 'Precio neto sin impuestos (spec "price_wo_taxes" en properties VTEX).';
 COMMENT ON COLUMN productos.ean                  IS 'Código de barras EAN/GTIN del SKU.';
 COMMENT ON COLUMN productos.multiplicador_unidad IS 'Multiplicador de unidad de venta (unitMultiplier en VTEX). Ej: 1.5 para caja de 1.5 m².';
-COMMENT ON COLUMN productos.tipo_producto        IS 'Clasificación del producto según el proveedor (ej: Cemento, Pintura Látex).';
+COMMENT ON COLUMN productos.tipo_producto        IS 'Clasificación granular del proveedor — spec "Tipo de Producto" en properties VTEX (ej: "Bujes de Acople", "Cemento Portland").';
+COMMENT ON COLUMN productos.familia_producto     IS 'Nivel raíz de la jerarquía de categorías (ej: "Plomería", "Pinturas").';
+COMMENT ON COLUMN productos.subtipo_producto     IS 'Nivel intermedio de la jerarquía de categorías (ej: "Distribución de agua").';
+COMMENT ON COLUMN productos.categoria_completa   IS 'Breadcrumb completo de categorías separado por " > " (ej: "Plomería > Distribución de agua > Polipropileno").';
 
 -- Índices para consultas típicas ---------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_productos_fuente       ON productos(fuente);
-CREATE INDEX IF NOT EXISTS idx_productos_empresa      ON productos(empresa);
-CREATE INDEX IF NOT EXISTS idx_productos_categoria    ON productos(categoria);
-CREATE INDEX IF NOT EXISTS idx_productos_tipo_producto ON productos(tipo_producto);
+CREATE INDEX IF NOT EXISTS idx_productos_fuente           ON productos(fuente);
+CREATE INDEX IF NOT EXISTS idx_productos_empresa          ON productos(empresa);
+CREATE INDEX IF NOT EXISTS idx_productos_categoria        ON productos(categoria);
+CREATE INDEX IF NOT EXISTS idx_productos_tipo_producto    ON productos(tipo_producto);
+CREATE INDEX IF NOT EXISTS idx_productos_familia_producto ON productos(familia_producto);

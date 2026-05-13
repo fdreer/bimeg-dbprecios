@@ -30,20 +30,31 @@ log = logging.getLogger("scraper")
 # Formato de producto normalizado (contrato con n8n / Supabase)
 # ============================================================================
 #
-# {
-#     "codigo_producto": str | None,
-#     "descripcion":     str,          # requerido
-#     "precio":          float,        # requerido
-#     "disponibilidad":  str | None,
-#     "url_producto":    str | None,
-#     "url_imagen":      str | None,
-#     "categoria":       str | None,
-#     "empresa":         str,
-#     "marca":           str | None,
-#     "proveedor":       str,
-#     "unidad_medida":   str | None,
-#     "fuente":          str,          # coincide con source.name
-# }
+# Campos comunes a todas las fuentes:
+#   codigo_producto: str | None
+#   descripcion:     str            # requerido
+#   precio:          float          # requerido
+#   disponibilidad:  str | None
+#   url_producto:    str | None
+#   url_imagen:      str | None
+#   categoria:       str | None     # hoja de la jerarquía
+#   empresa:         str
+#   marca:           str | None
+#   proveedor:       str
+#   unidad_medida:   str | None
+#   fuente:          str            # coincide con source.name
+#
+# Campos opcionales emitidos por el parser VTEX IO (Easy / El Amigo):
+#   item_id              : str | None        item.itemId
+#   nombre_completo      : str | None        item.nameComplete
+#   precio_lista          : float | None     offer.ListPrice
+#   precio_sin_impuestos : float | None      properties["price_wo_taxes"]
+#   ean                  : str | None        item.ean
+#   multiplicador_unidad : float | None      item.unitMultiplier
+#   tipo_producto        : str | None        properties["Tipo de Producto"]
+#   familia_producto     : str | None        categories[0] nivel 1
+#   subtipo_producto     : str | None        categories[0] nivel 2
+#   categoria_completa   : str | None        breadcrumb "A > B > C"
 
 
 # ============================================================================
@@ -125,9 +136,14 @@ def _parse_vtex_io_product(
     if brand == "-":
         brand = None
 
-    # La primera categoría es la más específica (hoja del árbol)
+    # Jerarquía de categorías — categories[0] es el path más específico
+    # (ej: "/Plomería/Distribución de agua/Polipropileno/").
     categories = product.get("categories", [])
-    categoria = categories[0].strip("/").split("/")[-1] if categories else None
+    familia, subtipo, categoria, categoria_completa = _parse_category_hierarchy(categories)
+
+    # Specs custom del vendor (más rico que la jerarquía de navegación)
+    tipo_producto = _get_property_value(product, "Tipo de Producto")
+    precio_sin_impuestos = _safe_float(_get_property_value(product, "price_wo_taxes"))
 
     link = product.get("link", "")
     url_producto = f"{store_base_url}{link}" if link else None
@@ -143,23 +159,80 @@ def _parse_vtex_io_product(
 
         images = item.get("images", [])
         is_available = offer.get("IsAvailable") or (offer.get("AvailableQuantity") or 0) > 0
+        precio_lista = offer.get("ListPrice") or offer.get("PriceWithoutDiscount")
 
         results.append({
-            "codigo_producto": item.get("itemId"),
-            "descripcion":     product.get("productName", ""),
-            "precio":          float(precio),
-            "disponibilidad":  "Disponible" if is_available else "Sin stock",
-            "url_producto":    url_producto,
-            "url_imagen":      images[0]["imageUrl"] if images else None,
-            "categoria":       categoria,
-            "empresa":         source.empresa,
-            "marca":           brand,
-            "proveedor":       source.proveedor,
-            "unidad_medida":   item.get("measurementUnit"),
-            "fuente":          source.name,
+            "codigo_producto":      item.get("itemId"),
+            "descripcion":          product.get("productName", ""),
+            "precio":               float(precio),
+            "disponibilidad":       "Disponible" if is_available else "Sin stock",
+            "url_producto":         url_producto,
+            "url_imagen":           images[0]["imageUrl"] if images else None,
+            "categoria":            categoria,
+            "empresa":              source.empresa,
+            "marca":                brand,
+            "proveedor":            source.proveedor,
+            "unidad_medida":        item.get("measurementUnit"),
+            "fuente":               source.name,
+            "item_id":              item.get("itemId"),
+            "nombre_completo":      item.get("nameComplete"),
+            "precio_lista":         float(precio_lista) if precio_lista is not None else None,
+            "precio_sin_impuestos": precio_sin_impuestos,
+            "ean":                  item.get("ean") or None,
+            "multiplicador_unidad": item.get("unitMultiplier"),
+            "tipo_producto":        tipo_producto,
+            "familia_producto":     familia,
+            "subtipo_producto":     subtipo,
+            "categoria_completa":   categoria_completa,
         })
 
     return results
+
+
+def _get_property_value(product: dict[str, Any], name: str) -> str | None:
+    """Devuelve el primer valor de una spec custom en product.properties.
+
+    VTEX expone specs como `[{"name": "...", "values": ["..."]}]`. Si la spec
+    no existe o no tiene valores, devuelve None.
+    """
+    for prop in product.get("properties") or []:
+        if prop.get("name") == name:
+            values = prop.get("values") or []
+            return values[0] if values else None
+    return None
+
+
+def _parse_category_hierarchy(
+    categories: list[str],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Parsea el path más específico de VTEX categories en (familia, subtipo, hoja, breadcrumb).
+
+    VTEX devuelve un array de paths ordenados de más específico a más genérico
+    (ej: ["/Plomería/Distribución de agua/Polipropileno/", "/Plomería/Distribución de agua/", "/Plomería/"]).
+    Usamos categories[0] porque contiene la jerarquía completa.
+
+    Retorna (None, None, None, None) si no hay categorías.
+    """
+    if not categories:
+        return None, None, None, None
+    parts = [p for p in categories[0].split("/") if p]
+    if not parts:
+        return None, None, None, None
+    familia = parts[0] if len(parts) >= 1 else None
+    subtipo = parts[1] if len(parts) >= 2 else None
+    hoja = parts[-1]
+    breadcrumb = " > ".join(parts)
+    return familia, subtipo, hoja, breadcrumb
+
+
+def _safe_float(value: Any) -> float | None:
+    """Convierte un valor (potencialmente str) a float. Devuelve None si no parsea."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 async def _scrape_vtex_io_by_categories(
